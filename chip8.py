@@ -10,12 +10,16 @@ import time
 import random
 
 class Chip8Emulator():
-    def __init__(self, rate=400):
+    def __init__(self, rate=400, debug_mode=False, super_chip=False):
         
         self._running = True
         self._display_surf = None
         self.size = self.width, self.height = 512, 256
         self.period = 1 / rate
+        self._debug = debug_mode
+
+        self._key_pressed = False
+        self._key_value = 0
 
         self._mem = [0 for i in range(0, 4096)]
         self._vmem = [1 for i in range(0, 64 * 32)]
@@ -54,10 +58,10 @@ class Chip8Emulator():
         self.copy_font_into_memory()
 
         self._key_map = {
-            '1': 0x1, '2': 0x2, '3': 0x3, '4': 0xC,
-            'q': 0x4, 'w': 0x5, 'e': 0x6, 'r': 0xD,
-            'a': 0x7, 's': 0x8, 'd': 0x9, 'f': 0xE,
-            'z': 0xA, 'x': 0x0, 'c': 0xB, 'v': 0xF
+            pygame.K_1: 0x1, pygame.K_2: 0x2, pygame.K_3: 0x3, pygame.K_4: 0xC,
+            pygame.K_q: 0x4, pygame.K_w: 0x5, pygame.K_e: 0x6, pygame.K_r: 0xD,
+            pygame.K_a: 0x7, pygame.K_s: 0x8, pygame.K_d: 0x9, pygame.K_f: 0xE,
+            pygame.K_z: 0xA, pygame.K_x: 0x0, pygame.K_c: 0xB, pygame.K_v: 0xF
         }
     
     def init(self):
@@ -69,13 +73,23 @@ class Chip8Emulator():
     def on_event(self, event):
         if event.type == pygame.QUIT:
             self._running = False
+        elif event.type == pygame.KEYDOWN:
+            if event.key in self._key_map:
+                self._key_value = self._key_map[event.key]
+                self._key_pressed = True
+            elif event.key == pygame.K_b:
+                self._debug = True
+        elif event.type == pygame.KEYUP:
+            if event.key in self._key_map:
+                self._key_value = 0
+                self._key_pressed = False
+
         
     def loop(self):
         
         # Fetch
         hb = self._mem[self._pc]
         lb = self._mem[self._pc + 1]
-        self._pc += 2
 
         # Decode and Execute I guess
         # Instruction has four nibbles, ir | X | Y | N
@@ -85,6 +99,19 @@ class Chip8Emulator():
         N = (lb & 0b00001111)
         NN = lb
         NNN = (X << 8) + lb
+
+        if self._debug == True:
+            print("PC:      ", hex(self._pc))
+            print("IR:      ", hex(hb) + hex(lb)[2:])
+            print("X:       ", hex(X))
+            print("Y:       ", hex(Y))
+            print("N:       ", hex(N))
+            print("NN:      ", hex(NN))
+            print("NNN:     ", hex(NNN), "\n")
+
+            self.debug_terminal()
+
+        self._pc += 2
 
         if ir == 0x0:      # Done
             if NN == 0xE0:
@@ -167,7 +194,7 @@ class Chip8Emulator():
 
             for i in range(N):
                 sprite_row = self._mem[self._I + i]
-                for j in range(8):
+                for j in range(9):
                     bit_addr = 8 - j
                     bit = (sprite_row & (1 << bit_addr)) >> bit_addr
 
@@ -191,7 +218,12 @@ class Chip8Emulator():
                     break
 
         elif ir == 0xE: # Skip if key
-            pass
+            if NN == 0x9E:
+                if self._key_value == self._regs[X]:
+                    self._pc += 2
+            elif NN == 0xA1:
+                if self._key_value != self._regs[X]:
+                    self._pc += 2
         elif ir == 0xF:
             if NN == 0x07:
                 self._regs[X] = self._delay_timer
@@ -210,11 +242,10 @@ class Chip8Emulator():
                     self._regs[0xF] = 1
                 
             elif NN == 0x0A:
-                """
-                for event in pygame.event.get():
-                    if event.type == pygame.
-                    self._regs[X] = self._key_map[]
-                """
+                if self._key_pressed:
+                    self._regs[X] = self._key_value
+                else:
+                    self._pc -= 2
             elif NN == 0x29:
                 self._I = (self._regs[X] & 0x0F) * 5
 
@@ -240,7 +271,7 @@ class Chip8Emulator():
         for i in range(64):
             for j in range(32):
                 if self._vmem[i * 32 + j] == 1:
-                    pygame.draw.rect(self._display_surf, (255, 255, 255), pygame.Rect(i * 8, j * 8, 8, 8))
+                    pygame.draw.rect(self._display_surf, (255, 255, 255), pygame.Rect(i * 8, j * 8, 7, 7))
                 else:
                     pygame.draw.rect(self._display_surf, (0, 0, 0), pygame.Rect(i * 8, j * 8, 8, 8))
         
@@ -268,6 +299,33 @@ class Chip8Emulator():
         for i, byte in enumerate(self._font):
             self._mem[starting_location + i] = byte
     
+    def debug_terminal(self):
+
+        instruction = input()
+
+        if instruction == "M":
+            self.print_memory_state()
+        elif instruction == "N":
+            self.print_register_state()
+        elif instruction == "B":
+            self._debug = False
+
+    def print_register_state(self):
+        print("I:       ", self._I)
+        print("Regs:    ", self._regs)
+        print("Stack:   ", self._stack)
+        print("Delay:   ", self._delay_timer)
+        print("Sound:   ", self._sound_timer)
+    
+    def print_memory_state(self):
+        for i, value in enumerate(self._mem):
+            if i % 16 == 0:
+                print("\n", hex(i), ": ", end=" ")
+            
+            print(hex(value), end=" ")
+        
+        print()
+
     def execute(self):
         if self.init() == False:
             self._running = False
@@ -302,10 +360,13 @@ def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("rom_path", type=str, help="Path to rom file")
+    parser.add_argument("--super-chip", help="Use this flag to enable SUPER-CHIP mode", default=False, action="store_true")
+    parser.add_argument("--debug", help="Use this flag to start debug mode", default=False, action="store_true")
+    parser.add_argument("--rate", type=int, help="Number of instructions performed per second", default=400)
 
     args = parser.parse_args()
 
-    emu = Chip8Emulator()
+    emu = Chip8Emulator(rate=args.rate, debug_mode=args.debug, super_chip=args.super_chip)
     emu.read_rom_into_memory(args.rom_path)
     emu.execute()
 
